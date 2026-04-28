@@ -327,6 +327,7 @@
                     <a href="/transactions">History</a>
                     {% if session.is_admin == 'true' %}
                         <a href="/admin">Admin Panel</a>
+    					<a href="/admin_transfer">Admin Transfer</a>
                     {% endif %}
                     <a href="/logout">Logout</a>
                     <span class="welcome">Welcome, {{ session.username }}</span>
@@ -343,7 +344,3 @@
     </div>
 </body>
 </html>
-{% if session.is_admin == 'true' %}
-    <a href="/admin">Admin Panel</a>
-    <a href="/admin_transfer">Admin Transfer</a>
-{% endif %}

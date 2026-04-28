@@ -1,8 +1,8 @@
-from flask import Flask, request, redirect, url_for, render_template, make_response
+from flask import Flask, request, redirect, url_for, render_template, session
 import os
 import random
-import string
-from datetime import datetime
+import secrets
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
@@ -11,6 +11,20 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 USER_DB = os.path.join(BASE_DIR, "users.txt")
 ACCOUNT_DB = os.path.join(BASE_DIR, "accounts.txt")
 TRANSACTION_DB = os.path.join(BASE_DIR, "transactions.txt")
+
+# secret.key file path & generation if it does not exist, 
+# required when using sessions via Flask instead of cookies
+KEY_FILE = os.path.join(BASE_DIR, 'secret.key')
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
+
+if os.path.exists(KEY_FILE):
+    with open(KEY_FILE, 'r') as f:
+        app.config['SECRET_KEY'] = f.read().strip()
+else:
+    new_key = secrets.token_hex(32)
+    with open(KEY_FILE, 'w') as f:
+        f.write(new_key)
+    app.config['SECRET_KEY'] = new_key
 
 def initialize_database():
     """Create database files with default admin account"""
@@ -327,22 +341,11 @@ initialize_database()
 @app.route('/')
 def index():
     """Display homepage"""
-    session = {
-        'logged_in': request.cookies.get('logged_in') == 'yes',
-        'username': request.cookies.get('username', ''),
-        'is_admin': request.cookies.get('is_admin', '')
-    }
-    return render_template('index.html', session=session)
+    return render_template('index.html')
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     """Handle user registration"""
-    session = {
-        'logged_in': request.cookies.get('logged_in') == 'yes',
-        'username': request.cookies.get('username', ''),
-        'is_admin': request.cookies.get('is_admin', '')
-    }
-    
     if request.method == 'POST':
         username = request.form['username']
         password = request.form['password']
@@ -374,11 +377,8 @@ def register():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     """Handle user login"""
-    session = {
-        'logged_in': request.cookies.get('logged_in') == 'yes',
-        'username': request.cookies.get('username', ''),
-        'is_admin': request.cookies.get('is_admin', '')
-    }
+    if session.get('logged_in'):
+        return redirect(url_for('dashboard'))
     
     if request.method == 'POST':
         username = request.form['username']
@@ -387,10 +387,11 @@ def login():
         user = get_user(username)
         
         if user and user['password'] == password:
-            resp = make_response(redirect(url_for('dashboard')))
-            resp.set_cookie('logged_in', 'yes')
-            resp.set_cookie('username', username)
-            resp.set_cookie('is_admin', user['is_admin'])
+            session['logged_in'] = True
+            session['username'] = username
+            session['is_admin'] = user['is_admin']
+
+            resp = redirect(url_for('dashboard'))
             return resp
         else:
             return show_message_page(
@@ -399,27 +400,21 @@ def login():
                 "Try Again"
             )
     
-    return render_template('login.html', session=session)
+    return render_template('login.html')
 
 @app.route('/dashboard')
 def dashboard():
     """Display user dashboard with accounts and recent transactions"""
-    if request.cookies.get('logged_in') != 'yes':
+    if not session.get('logged_in'):
         return redirect(url_for('login'))
     
-    session = {
-        'logged_in': True,
-        'username': request.cookies.get('username', ''),
-        'is_admin': request.cookies.get('is_admin', '')
-    }
-    
-    username = request.cookies.get('username')
+    username = session.get('username')
+
     user = get_user(username)
     accounts = get_user_accounts(username)
     transactions = get_user_transactions(username)
     
     return render_template('dashboard.html', 
-                         session=session,
                          user=user,
                          accounts=accounts,
                          transactions=transactions)
@@ -427,17 +422,11 @@ def dashboard():
 @app.route('/transfer', methods=['GET', 'POST'])
 def transfer():
     """Handle money transfers (regular users see only their accounts, admins see all)"""
-    if request.cookies.get('logged_in') != 'yes':
+    if not session.get('logged_in'):
         return redirect(url_for('login'))
     
-    session = {
-        'logged_in': True,
-        'username': request.cookies.get('username', ''),
-        'is_admin': request.cookies.get('is_admin', '')
-    }
-    
-    username = request.cookies.get('username')
-    is_admin = request.cookies.get('is_admin') == 'true'
+    username = session.get('username')
+    is_admin = session.get('is_admin') == 'true'
     
     if is_admin:
         from_accounts = get_all_accounts()
@@ -495,17 +484,11 @@ def transfer():
 @app.route('/transactions')
 def transactions_page():
     """Display transaction history with search and view toggle for admin"""
-    if request.cookies.get('logged_in') != 'yes':
+    if not session.get('logged_in'):
         return redirect(url_for('login'))
     
-    session = {
-        'logged_in': True,
-        'username': request.cookies.get('username', ''),
-        'is_admin': request.cookies.get('is_admin', '')
-    }
-    
-    username = request.cookies.get('username')
-    is_admin = request.cookies.get('is_admin') == 'true'
+    username = session.get('username')
+    is_admin = session.get('is_admin') == 'true'
     view_type = request.args.get('view', 'personal')
     search_query = request.args.get('search', '')
     
@@ -527,21 +510,15 @@ def transactions_page():
 @app.route('/admin')
 def admin():
     """Display admin dashboard with system overview"""
-    if request.cookies.get('logged_in') != 'yes':
+    if not session.get('logged_in'):
         return redirect(url_for('login'))
     
-    if request.cookies.get('is_admin') != 'true':
+    if session.get('is_admin') != 'true':
         return show_message_page(
             "Access Denied. Admin privileges required.",
             "/dashboard",
             "Return to Dashboard"
         ), 403
-    
-    session = {
-        'logged_in': True,
-        'username': request.cookies.get('username', ''),
-        'is_admin': request.cookies.get('is_admin', '')
-    }
     
     users = get_all_users_with_balance()
     accounts = get_all_accounts()
@@ -549,7 +526,6 @@ def admin():
     total_balance = sum(acc['balance'] for acc in accounts)
     
     return render_template('admin.html',
-                         session=session,
                          users=users,
                          accounts=accounts,
                          transactions=transactions,
@@ -558,21 +534,15 @@ def admin():
 @app.route('/admin_transfer', methods=['GET', 'POST'])
 def admin_transfer():
     """Admin-only route for transferring from any account"""
-    if request.cookies.get('logged_in') != 'yes':
+    if not session.get('logged_in'):
         return redirect(url_for('login'))
     
-    if request.cookies.get('is_admin') != 'true':
+    if session.get('is_admin') != 'true':
         return show_message_page(
             "Access Denied. Admin privileges required.",
             "/dashboard",
             "Return to Dashboard"
         ), 403
-    
-    session = {
-        'logged_in': True,
-        'username': request.cookies.get('username', ''),
-        'is_admin': request.cookies.get('is_admin', '')
-    }
     
     all_accounts = get_all_accounts()
     
@@ -615,10 +585,9 @@ def admin_transfer():
 @app.route('/logout')
 def logout():
     """Clear session cookies and log out user"""
-    resp = make_response(redirect(url_for('index')))
-    resp.set_cookie('logged_in', '', expires=0)
-    resp.set_cookie('username', '', expires=0)
-    resp.set_cookie('is_admin', '', expires=0)
+    session.clear()
+
+    resp = redirect(url_for('index'))
     return resp
 
 if __name__ == '__main__':
