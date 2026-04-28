@@ -72,6 +72,26 @@ def get_account_owner(account_number):
                     return parts[2]
     return None
 
+def parse_csv_line(line):
+    """Parse a CSV line, handling quoted fields properly"""
+    fields = []
+    current_field = []
+    in_quotes = False
+    
+    for char in line:
+        if char == '"':
+            in_quotes = not in_quotes
+        elif char == ',' and not in_quotes:
+            fields.append(''.join(current_field).strip())
+            current_field = []
+        else:
+            current_field.append(char)
+    
+    # Add the last field
+    fields.append(''.join(current_field).strip())
+    
+    return fields
+
 def get_user(username):
     """Retrieve user data by username"""
     if not os.path.exists(USER_DB):
@@ -81,7 +101,7 @@ def get_user(username):
         for line in f:
             line = line.strip()
             if line:
-                parts = line.split(',')
+                parts = parse_csv_line(line)
                 if len(parts) >= 5 and parts[0] == username:
                     return {
                         'username': parts[0],
@@ -140,7 +160,7 @@ def get_all_users_with_balance():
         for line in f:
             line = line.strip()
             if line:
-                parts = line.split(',')
+                parts = parse_csv_line(line)
                 if len(parts) >= 5:
                     username = parts[0]
                     accounts = get_user_accounts(username)
@@ -356,8 +376,21 @@ def register():
                 "Try Again"
             )
         
+        # Escape commas in user input to prevent CSV injection
+        # Wrap fields in quotes and escape any embedded quotes
+        def escape_csv_field(field):
+            field = str(field).replace('"', '""')
+            if ',' in field or '"' in field or '\n' in field:
+                return f'"{field}"'
+            return field
+        
+        escaped_username = escape_csv_field(username)
+        escaped_password = escape_csv_field(password)
+        escaped_full_name = escape_csv_field(full_name)
+        escaped_email = escape_csv_field(email)
+        
         with open(USER_DB, 'a') as f:
-            f.write(f"{username},{password},{full_name},{email},false\n")
+            f.write(f"{escaped_username},{escaped_password},{escaped_full_name},{escaped_email},false\n")
         
         account_num = generate_account_number()
         with open(ACCOUNT_DB, 'a') as f:
