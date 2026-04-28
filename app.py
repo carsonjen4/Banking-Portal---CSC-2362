@@ -86,6 +86,16 @@ def get_account_owner(account_number):
                     return parts[2]
     return None
 
+def parse_csv_field(field):
+    """Parse an escaped CSV field, handling quoted values"""
+    field = field.strip()
+    if field.startswith('"') and field.endswith('"'):
+        # Unwrap and unescape
+        inner = field[1:-1]
+        # Unescape double quotes
+        return inner.replace('""', '"')
+    return field
+
 def get_user(username):
     """Retrieve user data by username"""
     if not os.path.exists(USER_DB):
@@ -95,14 +105,28 @@ def get_user(username):
         for line in f:
             line = line.strip()
             if line:
-                parts = line.split(',')
-                if len(parts) >= 5 and parts[0] == username:
+                # Simple CSV parsing - split by comma but handle quoted fields
+                parts = []
+                current = ""
+                in_quotes = False
+                for char in line:
+                    if char == '"':
+                        in_quotes = not in_quotes
+                        current += char
+                    elif char == ',' and not in_quotes:
+                        parts.append(current)
+                        current = ""
+                    else:
+                        current += char
+                parts.append(current)  # Add last field
+                
+                if len(parts) >= 5 and parse_csv_field(parts[0]) == username:
                     return {
-                        'username': parts[0],
-                        'password': parts[1],
-                        'full_name': parts[2],
-                        'email': parts[3],
-                        'is_admin': parts[4]
+                        'username': parse_csv_field(parts[0]),
+                        'password': parse_csv_field(parts[1]),
+                        'full_name': parse_csv_field(parts[2]),
+                        'email': parse_csv_field(parts[3]),
+                        'is_admin': parse_csv_field(parts[4])
                     }
     return None
 
@@ -154,16 +178,30 @@ def get_all_users_with_balance():
         for line in f:
             line = line.strip()
             if line:
-                parts = line.split(',')
+                # Use CSV parsing to handle escaped fields
+                parts = []
+                current = ""
+                in_quotes = False
+                for char in line:
+                    if char == '"':
+                        in_quotes = not in_quotes
+                        current += char
+                    elif char == ',' and not in_quotes:
+                        parts.append(current)
+                        current = ""
+                    else:
+                        current += char
+                parts.append(current)
+                
                 if len(parts) >= 5:
-                    username = parts[0]
+                    username = parse_csv_field(parts[0])
                     accounts = get_user_accounts(username)
                     total_balance = sum(acc['balance'] for acc in accounts)
                     users.append({
                         'username': username,
-                        'full_name': parts[2],
-                        'email': parts[3],
-                        'is_admin': parts[4],
+                        'full_name': parse_csv_field(parts[2]),
+                        'email': parse_csv_field(parts[3]),
+                        'is_admin': parse_csv_field(parts[4]),
                         'account_count': len(accounts),
                         'total_balance': total_balance
                     })
@@ -344,6 +382,13 @@ def index():
     return render_template('index.html')
 
 @app.route('/register', methods=['GET', 'POST'])
+def escape_csv_field(field):
+    """Escape commas and quotes in CSV fields to prevent injection"""
+    if ',' in field or '"' in field or '\n' in field:
+        # Wrap in quotes and escape existing quotes
+        return '"' + field.replace('"', '""') + '"'
+    return field
+
 def register():
     """Handle user registration"""
     if request.method == 'POST':
@@ -359,8 +404,14 @@ def register():
                 "Try Again"
             )
         
+        # Escape CSV fields to prevent injection attacks
+        escaped_username = escape_csv_field(username)
+        escaped_password = escape_csv_field(password)
+        escaped_full_name = escape_csv_field(full_name)
+        escaped_email = escape_csv_field(email)
+        
         with open(USER_DB, 'a') as f:
-            f.write(f"{username},{password},{full_name},{email},false\n")
+            f.write(f"{escaped_username},{escaped_password},{escaped_full_name},{escaped_email},false\n")
         
         account_num = generate_account_number()
         with open(ACCOUNT_DB, 'a') as f:
